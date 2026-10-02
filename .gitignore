@@ -1,0 +1,48 @@
+# Rust
+/target/
+
+# devenv generated state
+/.devenv/
+/.devenv.flake.nix
+
+# direnv
+/.direnv/
+
+# Nix result symlinks
+/result
+/result-*
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local SQLite artifacts
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db-wal
+*.db-shm
+
+# Logs
+*.log
+
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Local QA / index output
+.qa/
+.omo/
+.codegraph/

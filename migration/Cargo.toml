@@ -1,0 +1,32 @@
+[package]
+name = "tfc-forge-migration"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "Versioned SeaORM schema and seed migrations for the TFC forge planner"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "tfc_forge_migration"
+path = "src/lib.rs"
+
+[dependencies]
+sea-orm = { version = "2.0.4", default-features = false, features = [
+    "sqlx-sqlite",
+    "runtime-tokio",
+    "macros",
+    "with-chrono",
+    "with-json",
+    "with-uuid",
+] }
+sea-orm-migration = { version = "2.0.4", default-features = false, features = [
+    "runtime-tokio",
+    "sqlx-sqlite",
+    "with-chrono",
+    "with-json",
+    "with-uuid",
+] }
+tokio = { version = "1.53.0", features = ["rt-multi-thread", "macros"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+uuid = { version = "1.26.1", features = ["v4", "serde"] }
