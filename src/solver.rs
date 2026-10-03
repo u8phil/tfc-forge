@@ -35,7 +35,7 @@ fn history_entries(code: usize) -> [Option<ActionId>; 3] {
 }
 
 fn matches(step: Option<ActionId>, rule_type: crate::domain::RuleType) -> bool {
-    step.is_some_and(|action| crate::domain::action_matches_type(action, rule_type))
+    step.is_some_and(|action| action.rule_type() == rule_type)
 }
 
 /// Evaluates a single rule against the last three actions (most recent first).

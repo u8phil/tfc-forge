@@ -5,7 +5,7 @@
 //!   - [`anvil`]: rule slots, the 2x4 action grid, the 0..150 work track
 //!   - [`solution`]: sequence, metrics, path strip, step table, save section
 //!   - [`library`]: category filter, fuzzy search, select/delete
-//!   - [`recognizer`]: image chooser/drop/paste, preview, apply
+//!   - [`recognizer`]: image chooser/drop/paste, summary, apply
 //!
 //! This module also holds the small non-visual helpers shared by the views;
 //! those are unit tested by the inline `tests` module at the bottom of this file.

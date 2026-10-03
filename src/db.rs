@@ -1,15 +1,15 @@
 //! SQLite recipe persistence.
 //!
 //! Application CRUD is written as direct [`sea_query`] statements executed
-//! through SeaORM's SQLite connection. Schema creation and seeding live in the
-//! [`tfc_forge_migration`] workspace crate; every open runs
+//! through SeaORM's SQLite connection. Schema and compatibility migrations live
+//! in the [`tfc_forge_migration`] workspace crate; every open runs
 //! [`Migrator::up`] before any query.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sea_orm::{
-    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbErr, ExprTrait, QueryResult,
+    ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbErr, ExprTrait,
     TransactionTrait, sea_query::Alias,
 };
 use sea_query::{Expr, Order, Query};
@@ -18,7 +18,7 @@ use tfc_forge_migration::{Migrator, MigratorTrait};
 
 use crate::domain::{
     ActionId, ForgeRule, RecipeDraft, RuleOrder, RuleType, SavedRecipe, ValidationError,
-    compact_actions, parse_saved_recipe_value, path_from_actions,
+    compact_actions, path_from_actions,
 };
 
 /// Database file name under the OS config directory.
@@ -341,17 +341,7 @@ impl RecipeStore {
         let backend = self.db.get_database_backend();
         let txn = self.db.begin().await?;
 
-        let remove_rules = Query::delete()
-            .from_table(Alias::new(recipes::RULES))
-            .and_where(Expr::col(Alias::new(recipes::RECIPE_ID)).eq(id))
-            .to_owned();
-        txn.execute_raw(backend.build(&remove_rules)).await?;
-
-        let remove_actions = Query::delete()
-            .from_table(Alias::new(recipes::ACTIONS))
-            .and_where(Expr::col(Alias::new(recipes::RECIPE_ID)).eq(id))
-            .to_owned();
-        txn.execute_raw(backend.build(&remove_actions)).await?;
+        self.delete_children(&txn, id).await?;
 
         let remove_recipe = Query::delete()
             .from_table(Alias::new(recipes::TABLE))
@@ -460,11 +450,6 @@ impl RecipeStore {
         Ok(map)
     }
 
-    /// Parse a recipe from a raw JSON value (used by the seed/test tooling).
-    pub fn parse_json_recipe(value: &serde_json::Value) -> Option<SavedRecipe> {
-        parse_saved_recipe_value(value)
-    }
-
     /// Verify that a stored recipe's actions reproduce its start/target.
     pub fn recipe_is_consistent(recipe: &SavedRecipe) -> bool {
         let path = path_from_actions(recipe.start, &recipe.actions);
@@ -495,47 +480,9 @@ fn sqlx_journal_mode_wal() -> sea_orm::sqlx::sqlite::SqliteJournalMode {
     sea_orm::sqlx::sqlite::SqliteJournalMode::Wal
 }
 
-// Keep `QueryResult` referenced so future refactors retain the import.
-#[allow(dead_code)]
-fn _assert_query_result_used(_: &QueryResult) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_saved_recipe_rejects_missing_category() {
-        let value = serde_json::json!({
-            "id": "recipe-1",
-            "name": "Pickaxe head",
-            "start": 0,
-            "target": 54,
-            "rules": [{"type": "punch", "order": "last"}],
-            "actions": ["punch"],
-            "compact": "1P",
-            "createdAt": "2026-01-01T00:00:00.000Z",
-            "updatedAt": "2026-01-01T00:00:00.000Z"
-        });
-        assert!(parse_saved_recipe_value(&value).is_none());
-    }
-
-    #[test]
-    fn parse_saved_recipe_accepts_valid_record() {
-        let value = serde_json::json!({
-            "id": "recipe-1",
-            "category": "Tools",
-            "name": "Pickaxe head",
-            "start": 0,
-            "target": 54,
-            "rules": [{"type": "punch", "order": "last"}],
-            "actions": ["punch"],
-            "compact": "1P",
-            "createdAt": "2026-01-01T00:00:00.000Z",
-            "updatedAt": "2026-01-01T00:00:00.000Z"
-        });
-        let parsed = parse_saved_recipe_value(&value).expect("valid");
-        assert_eq!(parsed.category, "Tools");
-    }
 
     #[test]
     fn validation_rejects_bad_drafts() {

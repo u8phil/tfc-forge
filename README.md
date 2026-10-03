@@ -109,11 +109,14 @@ silently accepted.
 * **Library** with a category filter, fuzzy search over the combined `Category / Name` (and the
   compact notation) using `fuzzy-matcher`, stable results, select-to-load of every field, and
   delete.
-* **Screenshot recognition** via a native file chooser (`rfd`), drag/drop from the OS, or
-  clipboard image paste (`arboard`). Images are decoded with the `image` crate, run through the
-  local recognizer, shown as a scaled preview, and reported with current/target/rules/panel
-  confidence bars, per-slot detail, and warnings. Apply replaces only the fields that were
-  recognized (rules only when nonempty).
+* **Screenshot recognition** via the `Open image` native chooser (`rfd`), the `Paste image`
+  button or `Cmd`/`Ctrl`+`V` clipboard paste (`arboard`), or OS drag/drop. Clipboard paste
+  accepts both pixel images and copied image *files* (`text/uri-list` from a file manager such
+  as Dolphin, `CF_HDROP`, and macOS file URLs included). Images are decoded with the `image`
+  crate, run through the local recognizer, and summarized in two compact rows: `Current` and
+  `Target` values (missing shown as `-`), then the recognized `Rules` joined with ` | `
+  (empty shown as `-`). Apply replaces only the fields that were recognized (rules only when
+  nonempty).
 * **Keyboard shortcuts** using egui command semantics so `Cmd` works on macOS and `Ctrl`
   elsewhere (see below).
 * **Local SQLite persistence** with automatic migrations on every launch.
@@ -125,14 +128,21 @@ silently accepted.
 | `Cmd`/`Ctrl` + `F` | Focus the library search box |
 | `Cmd`/`Ctrl` + `S` | Save the current recipe |
 | `Cmd`/`Ctrl` + `O` | Open a screenshot chooser |
-| `Cmd`/`Ctrl` + `V` | Paste an image from the clipboard (only when the clipboard holds an image and no text editor owns focus) |
+| `Cmd`/`Ctrl` + `V` | Paste an image or copied image file from the clipboard (skipped only when a text editor owns focus; the `Paste image` button is never skipped) |
 | `Escape` | Clear the library search when it is focused, or close the help panel |
 | `F1` | Toggle the shortcuts help panel |
 
-Cmd/Ctrl+V is deliberately conservative: it is only intercepted for image paste when the
-clipboard contains an image and no text editor should receive a normal paste, so ordinary text
-editing keeps working. The Current and Target `DragValue` controls also respond to the usual
-native keys: click to select, type a value, use the arrow keys, or drag.
+`Cmd`/`Ctrl`+`V` is deliberately conservative: it only routes to image paste when no text editor
+owns focus, so ordinary text editing keeps working; the `Paste image` button performs the same
+paste directly and is not gated on focus. On Linux image paste works under X11 (including
+XWayland) and on native Wayland compositors that advertise `ext-data-control-v1` or
+`wlr-data-control`; a bare Wayland session without either protocol (for example stock GNOME) is
+not supported. On those supported native Wayland compositors the clipboard may hold either a
+pixel image or copied image *files* (`text/uri-list`, for example copying a file in Dolphin), and
+both are recognized. Native Wayland file **drag/drop** is not available with the pinned winit
+0.30.13, so on Wayland use `Paste image` (with the image or file copied) or `Open image` instead
+of dropping a file. The Current and Target `DragValue` controls also respond to the usual native
+keys: click to select, type a value, use the arrow keys, or drag.
 
 ---
 
@@ -229,17 +239,20 @@ src/ui/mod.rs                 Shared UI helpers + pure state/filter tests
 src/ui/anvil.rs               Rule slots, 2x4 action grid, 0..150 work track
 src/ui/solution.rs            Solution metrics/path/table and the save section
 src/ui/library.rs             Category filter, fuzzy search, select/delete
-src/ui/recognizer.rs          Chooser/drop/paste, preview, confidence report, apply
+src/ui/recognizer.rs          Chooser/drop/paste, summary, apply
 src/domain.rs                 Types, deltas, rule tables, helpers, validation
 src/solver.rs                 BFS shortest-path solver
 src/recognition.rs            Local screenshot recognizer
 src/db.rs                     SQLite store (SeaORM + SeaQuery), migrations on open
 migration/                    Versioned schema/data migrations
 tests/*.rs                    Domain, solver, store, schema and recognition tests
-1.png .. 4.png                Reference screenshots used by the recognition tests
+assets/anvil-hit-draw-bend-t109.png   Reference screenshot (target 109) for the recognition tests
+assets/anvil-punch-bend-draw-t54.png  Reference screenshot (target 54) for the recognition tests
+assets/anvil-punch-hit-upset-t60.png  Reference screenshot (target 60) for the recognition tests
+assets/anvil-punch-bend-draw-t100.png Reference screenshot (target 100) for the recognition tests
 ```
 
-The four bundled screenshots are reference fixtures and are only read by the tests.
+The four bundled screenshots under `assets/` are reference fixtures and are only read by the tests.
 
 ---
 

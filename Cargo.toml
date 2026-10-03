@@ -21,13 +21,10 @@ sea-query = "1.0.2"
 tokio = { version = "1.53.0", features = ["rt-multi-thread", "macros"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 uuid = { version = "1.26.1", features = ["v4", "serde"] }
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
 dirs = "7.0.0"
 thiserror = "2.0.21"
-toml = "0.9.12"
 
-# Future native GUI / recognition dependencies, pinned now so the lockfile is stable.
+# Native GUI and anvil screenshot recognition dependencies.
 eframe = { version = "0.36.2", default-features = false, features = [
     "default_fonts",
     "glow",
@@ -44,7 +41,7 @@ image = { version = "0.25.10", default-features = false, features = [
     "webp",
 ] }
 rfd = "0.17.2"
-arboard = "3.6.1"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 fuzzy-matcher = "0.3.7"
 
 [dev-dependencies]

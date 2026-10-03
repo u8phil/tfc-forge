@@ -30,16 +30,6 @@ pub fn default_rules() -> Vec<ForgeRule> {
     ]
 }
 
-/// A loaded screenshot ready for recognition and preview.
-pub struct LoadedImage {
-    /// Decoded RGBA8 pixels, in the format recognized by the domain crate.
-    pub rgba: tfc_forge::RgbaImage,
-    /// A texture handle for the scaled preview.
-    pub texture: egui::TextureHandle,
-    /// Original file name or source description, for messages.
-    pub source: String,
-}
-
 /// Transient feedback shown under the save section.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Feedback {
@@ -136,8 +126,6 @@ pub struct ForgeApp {
     pub library_error: Option<String>,
 
     // --- Recognizer state -------------------------------------------------
-    /// Last loaded screenshot, if any.
-    pub image: Option<LoadedImage>,
     /// Last recognition result.
     pub recognition: Option<tfc_forge::RecognitionResult>,
     /// Recognizer status/error message.
@@ -174,7 +162,6 @@ impl ForgeApp {
             pending_delete_id: None,
             focus_search: false,
             library_error: None,
-            image: None,
             recognition: None,
             recognition_error: None,
             show_help: false,
@@ -360,98 +347,126 @@ impl ForgeApp {
         }
     }
 
-    /// Follow an uploaded screenshot: decode, recognize, preview.
-    pub fn load_image_bytes(
-        &mut self,
-        ctx: &egui::Context,
-        bytes: &[u8],
-        source: impl Into<String>,
-    ) {
-        let source = source.into();
+    /// Follow an uploaded screenshot: decode and recognize.
+    ///
+    /// Returns `true` only when the bytes decoded into a valid RGBA buffer and
+    /// recognition state was assigned. Every existing failure branch returns
+    /// `false` after setting the same error text as before.
+    pub fn load_image_bytes(&mut self, bytes: &[u8]) -> bool {
         match image::load_from_memory(bytes) {
             Ok(decoded) => {
                 let rgba8 = decoded.to_rgba8();
                 let (width, height) = rgba8.dimensions();
-                let raw = rgba8.into_raw();
-                match tfc_forge::RgbaImage::new(width as usize, height as usize, raw) {
+                match tfc_forge::RgbaImage::new(width as usize, height as usize, rgba8.into_raw()) {
                     Ok(rgba) => {
-                        let color = egui::ColorImage::from_rgba_unmultiplied(
-                            [width as usize, height as usize],
-                            &rgba.data,
-                        );
-                        let texture = ctx.load_texture(
-                            format!("anvil-preview-{source}"),
-                            color,
-                            egui::TextureOptions::LINEAR,
-                        );
-                        let recognition = tfc_forge::recognize_anvil(&rgba);
-                        self.image = Some(LoadedImage {
-                            rgba,
-                            texture,
-                            source,
-                        });
-                        self.recognition = Some(recognition);
+                        self.recognition = Some(tfc_forge::recognize_anvil(&rgba));
                         self.recognition_error = None;
+                        true
                     }
                     Err(error) => {
-                        self.image = None;
                         self.recognition = None;
                         self.recognition_error = Some(format!("Invalid image buffer: {error}"));
+                        false
                     }
                 }
             }
             Err(error) => {
-                self.image = None;
                 self.recognition = None;
                 self.recognition_error = Some(format!("Could not decode the image: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Read an image from a local filesystem path and load it for recognition.
+    ///
+    /// Returns `true` only when the bytes loaded successfully; a read failure
+    /// keeps the existing `Could not read <path>: <error>` feedback and returns
+    /// `false`.
+    pub fn load_image_path(&mut self, path: &std::path::Path) -> bool {
+        match std::fs::read(path) {
+            Ok(bytes) => self.load_image_bytes(&bytes),
+            Err(error) => {
+                self.recognition = None;
+                self.recognition_error =
+                    Some(format!("Could not read {}: {error}", path.display()));
+                false
             }
         }
     }
 
     /// Attempt to read an image from the system clipboard via arboard.
-    pub fn paste_clipboard_image(&mut self, ctx: &egui::Context) {
-        match arboard::Clipboard::new().and_then(|mut board| board.get_image()) {
+    ///
+    /// Exactly one [`arboard::Clipboard`] is created per attempt. A real pixel
+    /// image is preferred (`image/png` and the X11/Windows image formats). When
+    /// the clipboard instead carries copied *files* - Wayland `text/uri-list`,
+    /// X11 `URI_LIST`, Windows `CF_HDROP`, or macOS file URLs - `file_list()`
+    /// maps them onto local paths and the first path that decodes as an image
+    /// wins. If neither route yields an image, a concise visible error is
+    /// surfaced instead of silently doing nothing.
+    pub fn paste_clipboard_image(&mut self) {
+        let mut board = match arboard::Clipboard::new() {
+            Ok(board) => board,
+            Err(error) => {
+                self.recognition = None;
+                self.recognition_error = Some(format!("No image on the clipboard: {error}"));
+                return;
+            }
+        };
+
+        // 1. Pixel image: retain the existing decoded-RGBA path exactly.
+        let pixel_error = match board.get_image() {
             Ok(image) => {
                 let expected = image.width.saturating_mul(image.height).saturating_mul(4);
                 if image.bytes.len() != expected {
+                    self.recognition = None;
                     self.recognition_error =
                         Some("Clipboard image buffer had an unexpected size.".to_string());
-                    self.image = None;
-                    self.recognition = None;
                     return;
                 }
-                let color = egui::ColorImage::from_rgba_unmultiplied(
-                    [image.width, image.height],
-                    &image.bytes,
-                );
-                let texture = ctx.load_texture(
-                    "anvil-preview-clipboard",
-                    color,
-                    egui::TextureOptions::LINEAR,
-                );
-                let raw =
-                    tfc_forge::RgbaImage::new(image.width, image.height, image.bytes.to_vec());
-                match raw {
+                match tfc_forge::RgbaImage::new(image.width, image.height, image.bytes.to_vec()) {
                     Ok(rgba) => {
-                        let recognition = tfc_forge::recognize_anvil(&rgba);
-                        self.image = Some(LoadedImage {
-                            rgba,
-                            texture,
-                            source: "clipboard".to_string(),
-                        });
-                        self.recognition = Some(recognition);
+                        self.recognition = Some(tfc_forge::recognize_anvil(&rgba));
                         self.recognition_error = None;
                     }
                     Err(error) => {
-                        self.image = None;
                         self.recognition = None;
                         self.recognition_error = Some(format!("Invalid clipboard image: {error}"));
                     }
                 }
+                return;
             }
-            Err(error) => {
-                self.recognition_error = Some(format!("No image on the clipboard: {error}"));
+            // No pixel image; fall through to copied files.
+            Err(error) => error,
+        };
+
+        // 2. Copied files. `file_list()` is arboard's cross-platform mapping of
+        //    Wayland `text/uri-list`, X11 `URI_LIST`, Windows `CF_HDROP`, and
+        //    macOS file URLs onto local paths. arboard 3.6.1 splits the
+        //    URI-list payload on `\n` without trimming `\r`, so a standard CRLF
+        //    copy (Dolphin/GTK) leaves a trailing `\r` on each path; normalize
+        //    every owned candidate before use. Load the first valid image, not
+        //    merely the first path, and never panic on a bad candidate.
+        let candidates = board.get().file_list().unwrap_or_default();
+        let mut attempted = false;
+        for path in candidates {
+            let Some(path) = normalize_file_list_path(path) else {
+                continue;
+            };
+            attempted = true;
+            if self.load_image_path(&path) {
+                return;
             }
+        }
+
+        // 3. Neither pixels nor any copied file produced an image. When at
+        //    least one normalized candidate was actually attempted,
+        //    `load_image_path` already left a specific read/decode error as the
+        //    visible feedback; otherwise fall back to the pixel error so stale
+        //    feedback is never retained.
+        self.recognition = None;
+        if let Some(error) = clipboard_no_image_error(attempted, &pixel_error) {
+            self.recognition_error = Some(error);
         }
     }
 
@@ -546,6 +561,59 @@ impl ForgeApp {
     }
 }
 
+/// Decide the visible error after a clipboard paste yields no image.
+///
+/// `attempted` is true when at least one normalized copied-file candidate was
+/// handed to `load_image_path`, which then set a specific read/decode error that
+/// must be preserved. When no candidate was attempted - no files at all, or
+/// only candidates that normalized to `None` such as a bare `\r` - return the
+/// generic pixel-read error so stale feedback is replaced.
+fn clipboard_no_image_error(
+    attempted: bool,
+    pixel_error: &(impl std::fmt::Display + ?Sized),
+) -> Option<String> {
+    if attempted {
+        None
+    } else {
+        Some(format!("No image on the clipboard: {pixel_error}"))
+    }
+}
+
+/// Normalize one candidate from `arboard::Clipboard::file_list`.
+///
+/// arboard 3.6.1 maps a Wayland/X11 `text/uri-list` payload to paths by
+/// splitting on `\n`, so a standard `\r\n` line terminator leaves a stray `\r`
+/// at the end of every entry. Strip only trailing `\r` bytes and keep every
+/// other byte, including spaces and arbitrary non-UTF-8 sequences. Return
+/// `None` when nothing but `\r` bytes remain so the caller skips that
+/// candidate. Non-Unix platforms are returned unchanged.
+#[cfg(unix)]
+fn normalize_file_list_path(path: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut bytes = path.as_os_str().as_bytes().to_vec();
+    while bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(std::path::PathBuf::from(OsString::from_vec(bytes)))
+    }
+}
+
+/// Non-Unix platforms never hit arboard's `\n`-split URI-list parser, so the
+/// path is returned unchanged; only an empty candidate is skipped.
+#[cfg(not(unix))]
+fn normalize_file_list_path(path: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
 impl eframe::App for ForgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.draw(ui);
@@ -592,7 +660,6 @@ fn handle_shortcuts(app: &mut ForgeApp, ctx: &egui::Context) {
     let find = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
     let save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
     let open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
-    let paste = KeyboardShortcut::new(Modifiers::COMMAND, Key::V);
 
     if ctx.input_mut(|input| input.consume_shortcut(&find)) {
         app.focus_search = true;
@@ -601,23 +668,28 @@ fn handle_shortcuts(app: &mut ForgeApp, ctx: &egui::Context) {
         app.save_current();
     }
     if ctx.input_mut(|input| input.consume_shortcut(&open)) {
-        choose_screenshot(app, ctx);
+        choose_screenshot(app);
     }
-    // Cmd/Ctrl+V: only intercept when no text editor currently owns keyboard
-    // input and the clipboard actually holds an image. The shortcut is not
-    // consumed until both hold, so a focused text edit still receives its
-    // normal paste event unchanged.
-    if !ctx.egui_wants_keyboard_input()
-        && clipboard_has_image()
-        && ctx.input_mut(|input| input.consume_shortcut(&paste))
-    {
-        app.paste_clipboard_image(ctx);
+    // Cmd/Ctrl+V: image paste. egui-winit drains the Ctrl+V press for any paste
+    // attempt, so `consume_shortcut(COMMAND, V)` can never see it. It only emits
+    // `Event::Paste` when the clipboard has text; for an image-only clipboard it
+    // swallows the press silently but still forwards the V release, on which
+    // Ctrl (and therefore `modifiers.command`) is still held because the normal
+    // sequence releases V before Ctrl. Peek at the events immutably instead of
+    // consuming them, so a focused TextEdit still receives its normal
+    // `Event::Paste(String)` untouched. Only a focused text edit is exempt; the
+    // explicit `Paste image` button bypasses this gate entirely. The clipboard
+    // is touched only on an actual paste attempt, and `paste_clipboard_image`
+    // owns the single Clipboard handle and the no-image feedback.
+    let paste_attempt = ctx.input(|input| input.events.iter().any(is_paste_attempt));
+    if paste_attempt && !ctx.text_edit_focused() {
+        app.paste_clipboard_image();
     }
 
     // Escape clears the library search only when the search box itself owns
     // focus, help is closed, and there is a query to clear. Otherwise the key
     // is left untouched for whatever other widget wants it.
-    let search_id = egui::Id::new("tfc-library-search");
+    let search_id = ui::library::search_id();
     let search_focused = ctx.memory(|memory| memory.has_focus(search_id));
     if !app.show_help
         && !app.search.is_empty()
@@ -628,33 +700,37 @@ fn handle_shortcuts(app: &mut ForgeApp, ctx: &egui::Context) {
     }
 }
 
-/// Cheap clipboard probe used to decide whether Cmd/Ctrl+V should be
-/// intercepted for image paste.
-fn clipboard_has_image() -> bool {
-    arboard::Clipboard::new()
-        .map(|mut board| board.get_image().is_ok())
-        .unwrap_or(false)
+/// True when this egui event is an image-paste attempt worth probing the
+/// clipboard for.
+///
+/// Pinned to egui-winit 0.36.2: it consumes the Ctrl+V press for every paste
+/// attempt and emits `Event::Paste` only when the clipboard carries text. An
+/// image-only clipboard therefore produces no `Paste` event, but the matching V
+/// release is still forwarded with the command modifier still set (V is
+/// released before Ctrl). Accepting both keeps text paste working (the event is
+/// never consumed) while making the image-only case observable.
+fn is_paste_attempt(event: &egui::Event) -> bool {
+    match event {
+        egui::Event::Paste(_) => true,
+        egui::Event::Key {
+            key: egui::Key::V,
+            pressed: false,
+            modifiers,
+            ..
+        } => modifiers.command,
+        _ => false,
+    }
 }
 
 /// Open a native file chooser for an anvil screenshot.
-pub fn choose_screenshot(app: &mut ForgeApp, ctx: &egui::Context) {
+pub fn choose_screenshot(app: &mut ForgeApp) {
     let picked = rfd::FileDialog::new()
         .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp", "webp"])
         .set_title("Choose an anvil screenshot")
         .pick_file();
+    // Cancelling the chooser stays a no-op.
     if let Some(path) = picked {
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                let label = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.display().to_string());
-                app.load_image_bytes(ctx, &bytes, label);
-            }
-            Err(error) => {
-                app.recognition_error = Some(format!("Could not read {}: {error}", path.display()));
-            }
-        }
+        app.load_image_path(&path);
     }
 }
 
@@ -880,6 +956,206 @@ mod tests {
             assert!((left - (content - inter_pane) * 0.58).abs() < 0.01);
             assert!((right - (content - inter_pane) * 0.42).abs() < 0.01);
         }
+    }
+
+    /// The image-paste signal must accept a real paste event and the command-V
+    /// *release* egui-winit forwards after it swallows the image-paste press,
+    /// while rejecting the swallowed press and an ordinary plain-V release.
+    #[test]
+    fn paste_attempt_predicate_matches_only_image_paste_signals() {
+        use egui::{Event, Key, Modifiers};
+
+        // A real paste event (text clipboard contents) counts as an attempt.
+        assert!(is_paste_attempt(&Event::Paste("hello".to_string())));
+
+        // Command-V release: egui-winit forwards this after swallowing the
+        // image-paste press, with Ctrl still held.
+        let command_v_release = Event::Key {
+            key: Key::V,
+            physical_key: Some(Key::V),
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        assert!(is_paste_attempt(&command_v_release));
+
+        // Command-V press: swallowed by egui-winit, egui never sees it, and if
+        // it did it must not be treated as the paste signal.
+        let command_v_press = Event::Key {
+            key: Key::V,
+            physical_key: Some(Key::V),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        assert!(!is_paste_attempt(&command_v_press));
+
+        // Plain V release is ordinary typing, not a paste attempt.
+        let plain_v_release = Event::Key {
+            key: Key::V,
+            physical_key: Some(Key::V),
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!(!is_paste_attempt(&plain_v_release));
+    }
+
+    fn test_app() -> (tempfile::TempDir, ForgeApp) {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let runtime = Runtime::new().expect("runtime");
+        let store = runtime
+            .block_on(RecipeStore::open(dir.path().join("recipes.sqlite3")))
+            .expect("store");
+        (dir, ForgeApp::new(runtime, store, Vec::new(), None))
+    }
+
+    /// `load_image_path` reads a fixture, recognizes it, and reports success
+    /// only when recognition state was actually assigned.
+    #[test]
+    fn load_image_path_recognizes_restored_fixture() {
+        let (_dir, mut app) = test_app();
+        let path = std::path::Path::new("assets/anvil-hit-draw-bend-t109.png");
+        assert!(app.load_image_path(path));
+
+        let result = app.recognition.as_ref().expect("recognition loaded");
+        assert_eq!(result.target, Some(109));
+        assert_eq!(result.rules.len(), 3);
+        assert!(app.recognition_error.is_none());
+    }
+
+    /// Malformed bytes must return `false` and leave the existing decode error
+    /// text, with no stale recognition state.
+    #[test]
+    fn load_image_bytes_failure_returns_false_and_sets_error() {
+        let (_dir, mut app) = test_app();
+        assert!(!app.load_image_bytes(b"not a real image"));
+        assert!(app.recognition.is_none());
+        let error = app.recognition_error.as_deref().unwrap_or("");
+        assert!(
+            error.starts_with("Could not decode the image:"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A missing path must return `false`, clear recognition established by a
+    /// previous load, and surface the `Could not read <path>: <error>` feedback.
+    #[test]
+    fn load_image_path_failure_clears_recognition_and_sets_error() {
+        let (_dir, mut app) = test_app();
+        let fixture = std::path::Path::new("assets/anvil-hit-draw-bend-t109.png");
+        assert!(app.load_image_path(fixture));
+        assert!(app.recognition.is_some());
+
+        let missing = std::path::Path::new("assets/definitely-missing-image.png");
+        assert!(!app.load_image_path(missing));
+        assert!(app.recognition.is_none());
+        let error = app.recognition_error.as_deref().unwrap_or("");
+        assert!(error.starts_with("Could not read assets/"), "{error}");
+        assert!(error.contains("definitely-missing-image.png"), "{error}");
+    }
+
+    /// arboard 3.6.1 maps a `text/uri-list` payload to paths by splitting on
+    /// `\n` without trimming `\r`, so every standard CRLF entry keeps a trailing
+    /// carriage return. The normalizer must strip only those trailing `\r`
+    /// bytes, preserve every other byte (including arbitrary non-UTF-8 filename
+    /// bytes), and reject a candidate that is empty afterwards.
+    #[cfg(unix)]
+    #[test]
+    fn normalize_file_list_path_strips_trailing_carriage_return() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        // Standard CRLF `text/uri-list`: strip the trailing `\r`.
+        let crlf = std::path::PathBuf::from(OsString::from_vec(
+            b"/tmp/anvil-hit-draw-bend-t109.png\r".to_vec(),
+        ));
+        assert_eq!(
+            normalize_file_list_path(crlf),
+            Some(std::path::PathBuf::from(
+                "/tmp/anvil-hit-draw-bend-t109.png"
+            ))
+        );
+
+        // A path without `\r` is unchanged, spaces and all.
+        let plain = std::path::PathBuf::from("/tmp/anvil hit draw bend.png");
+        assert_eq!(normalize_file_list_path(plain.clone()), Some(plain));
+
+        // Arbitrary non-UTF-8 path bytes survive normalization untouched.
+        let non_utf8 =
+            std::path::PathBuf::from(OsString::from_vec(b"/tmp/\xff\xfe-anvil.png\r".to_vec()));
+        assert_eq!(
+            normalize_file_list_path(non_utf8),
+            Some(std::path::PathBuf::from(OsString::from_vec(
+                b"/tmp/\xff\xfe-anvil.png".to_vec()
+            )))
+        );
+
+        // Nothing but `\r` left after normalization is rejected.
+        let only_cr = std::path::PathBuf::from(OsString::from_vec(b"\r".to_vec()));
+        assert_eq!(normalize_file_list_path(only_cr), None);
+    }
+
+    /// The clipboard failure decision must fall back to the generic pixel error
+    /// when no normalized candidate was attempted (no files at all, or only
+    /// candidates that normalized to `None`), and must preserve the specific
+    /// per-path read/decode error when one was attempted.
+    #[test]
+    fn clipboard_no_image_error_only_generic_without_attempt() {
+        assert_eq!(
+            clipboard_no_image_error(false, "no image data"),
+            Some("No image on the clipboard: no image data".to_string())
+        );
+        assert_eq!(clipboard_no_image_error(true, "no image data"), None);
+    }
+
+    /// The recognizer panel must render the input controls plus the compact
+    /// two-row fixture summary, and none of the removed preview/confidence/
+    /// detail labels, captured from the real headless draw output.
+    #[test]
+    fn ui_text_includes_compact_recognition_summary() {
+        let (_dir, mut app) = test_app();
+        assert!(app.load_image_path(std::path::Path::new("assets/anvil-hit-draw-bend-t109.png")));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 820.0),
+                )),
+                ..Default::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                app.draw(ui);
+            });
+            for shape in &output.shapes {
+                collect_text(&shape.shape, &mut texts);
+            }
+            output.drop_without_applying_deltas();
+        }
+        let joined = texts.join("|");
+        for label in [
+            "Open image",
+            "Paste image",
+            "Drop: not Wayland",
+            "Current",
+            "Target",
+            "Rules",
+            "109",
+            "Hit Last | Draw Second Last | Bend Third Last",
+        ] {
+            assert!(joined.contains(label), "missing {label:?}: {joined}");
+        }
+        assert!(
+            !joined.contains("Panel"),
+            "Panel label should be gone: {joined}"
+        );
+        assert!(
+            !joined.contains("Per-slot detail"),
+            "Per-slot detail should be gone: {joined}"
+        );
     }
 
     fn collect_text(shape: &egui::epaint::Shape, out: &mut Vec<String>) {

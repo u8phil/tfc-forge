@@ -21,10 +21,9 @@ pub mod solver;
 
 pub use db::{RecipeStore, StoreError};
 pub use domain::{
-    ACTION_IDS, ACTIONS, ActionDef, ActionId, ForgeRule, ForgeSolution, LIMIT, MIN_WORK,
-    RULE_ORDERS, RULE_TYPES, RecipeDraft, RuleOrder, RuleType, SavedRecipe, ValidationError,
-    action_def, action_matches_type, compact_actions, format_rule, has_distinct_rule_order_slots,
-    parse_saved_recipe_value, path_from_actions,
+    ACTIONS, ActionDef, ActionId, ForgeRule, ForgeSolution, LIMIT, MIN_WORK, RULE_ORDERS,
+    RULE_TYPES, RecipeDraft, RuleOrder, RuleType, SavedRecipe, ValidationError, action_def,
+    compact_actions, has_distinct_rule_order_slots, path_from_actions,
 };
 pub use recognition::{
     FieldConfidence, PanelLocation, RecognitionError, RecognitionResult, RgbaImage, RuleField,

@@ -1,8 +1,8 @@
 //! Behavioral tests for the native Rust anvil screenshot recognizer.
 //!
-//! These mirror `tests/recognition.test.ts` exactly: the four bundled root PNG
-//! fixtures, shifted/padded localization, nearest-neighbour upscaling, and
-//! fail-closed handling of blank/tiny/malformed inputs.
+//! The suite covers the four bundled PNG fixtures under `assets/`,
+//! shifted/padded localization, nearest-neighbour upscaling, and fail-closed
+//! handling of blank/tiny/malformed inputs.
 
 use std::path::PathBuf;
 
@@ -97,7 +97,7 @@ fn assert_fixture(
 #[test]
 fn fixture_1_exact_fields() {
     assert_fixture(
-        "1.png",
+        "assets/anvil-hit-draw-bend-t109.png",
         (60, 44),
         2,
         0,
@@ -109,7 +109,7 @@ fn fixture_1_exact_fields() {
 #[test]
 fn fixture_2_exact_fields() {
     assert_fixture(
-        "2.png",
+        "assets/anvil-punch-bend-draw-t54.png",
         (65, 64),
         2,
         0,
@@ -121,7 +121,7 @@ fn fixture_2_exact_fields() {
 #[test]
 fn fixture_3_exact_fields() {
     assert_fixture(
-        "3.png",
+        "assets/anvil-punch-hit-upset-t60.png",
         (42, 30),
         2,
         0,
@@ -133,7 +133,7 @@ fn fixture_3_exact_fields() {
 #[test]
 fn fixture_4_exact_fields() {
     assert_fixture(
-        "4.png",
+        "assets/anvil-punch-bend-draw-t100.png",
         (43, 37),
         2,
         0,
@@ -144,7 +144,7 @@ fn fixture_4_exact_fields() {
 
 #[test]
 fn locates_a_padded_shifted_fixture() {
-    let original = decode("1.png");
+    let original = decode("assets/anvil-hit-draw-bend-t109.png");
     let padded = pad_image(&original, 137, 91, 23, 47);
     assert_ne!(padded.width, original.width);
     assert_ne!(padded.height, original.height);
@@ -164,7 +164,7 @@ fn locates_a_padded_shifted_fixture() {
 
 #[test]
 fn infers_larger_scale_after_nearest_neighbour_upscale() {
-    let original = decode("1.png");
+    let original = decode("assets/anvil-hit-draw-bend-t109.png");
     let scaled = upscale_nearest(&original, 2);
     let result = recognize_anvil(&scaled);
     assert_eq!(result.start, Some(0));

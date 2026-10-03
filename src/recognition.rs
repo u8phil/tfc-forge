@@ -86,15 +86,6 @@ impl TryFrom<image::RgbaImage> for RgbaImage {
     }
 }
 
-impl TryFrom<&image::RgbaImage> for RgbaImage {
-    type Error = RecognitionError;
-
-    fn try_from(image: &image::RgbaImage) -> Result<Self, Self::Error> {
-        let (width, height) = image.dimensions();
-        RgbaImage::new(width as usize, height as usize, image.as_raw().clone())
-    }
-}
-
 /// Screen-space location of the canonical anvil panel grid.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PanelLocation {
@@ -103,8 +94,6 @@ pub struct PanelLocation {
     pub y: i32,
     /// Integer GUI scale, 1..=5.
     pub scale: i32,
-    /// Detection score, higher is better (roughly 0..1).
-    pub score: f32,
 }
 
 /// Per-slot recognition detail, including confidence for unavailable fields.
@@ -204,68 +193,56 @@ fn at(image: &RgbaImage, x: i32, y: i32) -> Option<[u8; 3]> {
 }
 
 fn is_vivid(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let mx = i32::from(r.max(g).max(b));
-            let mn = i32::from(r.min(g).min(b));
-            mx - mn > 55 && mx > 95
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let mx = i32::from(r.max(g).max(b));
+    let mn = i32::from(r.min(g).min(b));
+    mx - mn > 55 && mx > 95
 }
 
 fn is_orange(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
-            r > 165 && g > 40 && g < 205 && b < 90 && r - b > 90
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+    r > 165 && g > 40 && g < 205 && b < 90 && r - b > 90
 }
 
 fn is_green_core(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
-            g >= 140 && g - r >= 55 && g - b >= 55
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+    g >= 140 && g - r >= 55 && g - b >= 55
 }
 
 /// A lit order-ladder rung is tinted orange when the rule is unmet and green
 /// when the current history already satisfies it; unlit rungs stay grey.
 fn is_lit_rung(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
-            is_orange(p) || (g >= 120 && g - r >= 45 && g - b >= 45)
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+    is_orange(p) || (g >= 120 && g - r >= 45 && g - b >= 45)
 }
 
 fn is_red_core(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
-            r >= 165 && r - g >= 70 && r - b >= 70
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let (r, g, b) = (i32::from(r), i32::from(g), i32::from(b));
+    r >= 165 && r - g >= 70 && r - b >= 70
 }
 
 /// Bright, near-greyscale pixels: the white glyph art drawn over the button.
 fn is_glyph(p: Option<[u8; 3]>) -> bool {
-    match p {
-        None => false,
-        Some([r, g, b]) => {
-            let mx = i32::from(r.max(g).max(b));
-            let mn = i32::from(r.min(g).min(b));
-            mn > 150 && mx - mn < 80
-        }
-    }
+    let Some([r, g, b]) = p else {
+        return false;
+    };
+    let mx = i32::from(r.max(g).max(b));
+    let mn = i32::from(r.min(g).min(b));
+    mn > 150 && mx - mn < 80
 }
 
 /// An 8-connected component bounding box and area.
@@ -341,7 +318,10 @@ where
     out
 }
 
-fn vivid_fraction(image: &RgbaImage, x: i32, y: i32, w: i32, h: i32) -> f64 {
+fn region_fraction<F>(image: &RgbaImage, x: i32, y: i32, w: i32, h: i32, predicate: F) -> f64
+where
+    F: Fn(Option<[u8; 3]>) -> bool,
+{
     let mut hits: u64 = 0;
     let mut total: u64 = 0;
     let mut yy = y;
@@ -349,29 +329,7 @@ fn vivid_fraction(image: &RgbaImage, x: i32, y: i32, w: i32, h: i32) -> f64 {
         let mut xx = x;
         while xx < x + w {
             total += 1;
-            if is_vivid(at(image, xx, yy)) {
-                hits += 1;
-            }
-            xx += 1;
-        }
-        yy += 1;
-    }
-    if total > 0 {
-        hits as f64 / total as f64
-    } else {
-        0.0
-    }
-}
-
-fn orange_fraction(image: &RgbaImage, x: i32, y: i32, w: i32, h: i32) -> f64 {
-    let mut hits: u64 = 0;
-    let mut total: u64 = 0;
-    let mut yy = y;
-    while yy < y + h {
-        let mut xx = x;
-        while xx < x + w {
-            total += 1;
-            if is_orange(at(image, xx, yy)) {
+            if predicate(at(image, xx, yy)) {
                 hits += 1;
             }
             xx += 1;
@@ -462,24 +420,26 @@ struct PanelHypothesis {
 fn score_hypothesis(image: &RgbaImage, ox: i32, oy: i32, scale: i32) -> PanelHypothesis {
     let mut vivid = 0.0;
     for button in &BUTTONS {
-        vivid += vivid_fraction(
+        vivid += region_fraction(
             image,
             ox + button.x * scale,
             oy + button.y * scale,
             16 * scale,
             16 * scale,
+            is_vivid,
         );
     }
     vivid /= BUTTONS.len() as f64;
 
     let mut orange = 0;
     for i in 0..3 {
-        let fraction = orange_fraction(
+        let fraction = region_fraction(
             image,
             ox + (59 + 19 * i) * scale,
             oy + 7 * scale,
             OVERLAY_SIZE * scale,
             22 * scale,
+            is_orange,
         );
         if fraction > 0.02 {
             orange += 1;
@@ -790,17 +750,16 @@ fn classify_glyph(templates: &GlyphTemplates, mask: &BinaryMask) -> GlyphMatch {
         }
         best.push((*rule_type, top));
     }
-    let mut ranked = best.clone();
-    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let (rule_type, score) = ranked[0];
-    let runner_up = ranked.get(1).map_or(0.0, |entry| entry.1);
-
-    // Generic bare-hammer fallback: a hit glyph has no delta text, so if nothing
-    // matches confidently but the icon resembles the hammer templates, call it a hit.
     let hit_score = best
         .iter()
         .find(|(candidate, _)| *candidate == RuleType::Hit)
         .map_or(0.0, |entry| entry.1);
+    best.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let (rule_type, score) = best[0];
+    let runner_up = best.get(1).map_or(0.0, |entry| entry.1);
+
+    // Generic bare-hammer fallback: a hit glyph has no delta text, so if nothing
+    // matches confidently but the icon resembles the hammer templates, call it a hit.
     if rule_type != RuleType::Hit
         && score < ACCEPT_GLYPH_SCORE
         && hit_score >= ACCEPT_GLYPH_SCORE - 0.1
@@ -911,7 +870,6 @@ pub fn recognize_anvil(image: &RgbaImage) -> RecognitionResult {
         x: panel.ox,
         y: panel.oy,
         scale: panel.scale,
-        score: panel.score as f32,
     };
 
     if panel.current.is_none() {

@@ -10,10 +10,6 @@
 //! The authoritative, source-confirmed work range is INCLUSIVE `0..=150`. Any
 //! intermediate work value outside that range would destroy the item in game.
 
-use std::fmt;
-
-use serde::{Deserialize, Serialize};
-
 /// Inclusive upper bound of the legal work range. `ForgeStep.LIMIT = 150`.
 pub const LIMIT: i32 = 150;
 
@@ -21,8 +17,7 @@ pub const LIMIT: i32 = 150;
 pub const MIN_WORK: i32 = 0;
 
 /// One of the eight anvil actions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionId {
     HitLight,
     HitMedium,
@@ -35,8 +30,7 @@ pub enum ActionId {
 }
 
 /// Generic rule type. A generic [`RuleType::Hit`] covers all three hit strengths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuleType {
     Hit,
     Draw,
@@ -47,8 +41,7 @@ pub enum RuleType {
 }
 
 /// History position a rule is satisfied in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuleOrder {
     Any,
     Last,
@@ -58,7 +51,7 @@ pub enum RuleOrder {
 }
 
 /// A single forge rule: a generic type plus an order constraint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ForgeRule {
     pub rule_type: RuleType,
     pub order: RuleOrder,
@@ -71,7 +64,7 @@ impl ForgeRule {
 }
 
 /// An ordered solution returned by the solver.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForgeSolution {
     /// Ordered actions applied from start to target.
     pub actions: Vec<ActionId>,
@@ -155,17 +148,6 @@ pub const ACTIONS: [ActionDef; 8] = [
     },
 ];
 
-pub const ACTION_IDS: [ActionId; 8] = [
-    ActionId::HitLight,
-    ActionId::HitMedium,
-    ActionId::HitHard,
-    ActionId::Draw,
-    ActionId::Punch,
-    ActionId::Bend,
-    ActionId::Upset,
-    ActionId::Shrink,
-];
-
 pub const RULE_TYPES: [RuleType; 6] = [
     RuleType::Hit,
     RuleType::Draw,
@@ -188,14 +170,6 @@ pub fn action_def(id: ActionId) -> &'static ActionDef {
     ACTIONS
         .iter()
         .find(|action| action.id == id)
-        .expect("every ActionId has a definition")
-}
-
-/// Canonical index of an action in [`ACTIONS`].
-pub fn action_index(id: ActionId) -> usize {
-    ACTIONS
-        .iter()
-        .position(|action| action.id == id)
         .expect("every ActionId has a definition")
 }
 
@@ -241,7 +215,7 @@ impl RuleOrder {
     }
 }
 
-/// Database/serde stable key for an action id (snake_case).
+/// Database stable key for an action id (snake_case).
 impl ActionId {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -319,24 +293,6 @@ impl RuleOrder {
     }
 }
 
-impl fmt::Display for ActionId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl fmt::Display for RuleType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl fmt::Display for RuleOrder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// One of the three history positions a rule can be satisfied in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryPosition {
@@ -347,22 +303,13 @@ enum HistoryPosition {
 
 /// Exact set of history positions each order is compatible with.
 fn order_positions(order: RuleOrder) -> &'static [HistoryPosition] {
-    const LAST: [HistoryPosition; 1] = [HistoryPosition::Last];
-    const SECOND: [HistoryPosition; 1] = [HistoryPosition::SecondLast];
-    const THIRD: [HistoryPosition; 1] = [HistoryPosition::ThirdLast];
-    const NOT_LAST: [HistoryPosition; 2] =
-        [HistoryPosition::SecondLast, HistoryPosition::ThirdLast];
-    const ANY: [HistoryPosition; 3] = [
-        HistoryPosition::Last,
-        HistoryPosition::SecondLast,
-        HistoryPosition::ThirdLast,
-    ];
+    use HistoryPosition::*;
     match order {
-        RuleOrder::Last => &LAST,
-        RuleOrder::SecondLast => &SECOND,
-        RuleOrder::ThirdLast => &THIRD,
-        RuleOrder::NotLast => &NOT_LAST,
-        RuleOrder::Any => &ANY,
+        RuleOrder::Last => &[Last],
+        RuleOrder::SecondLast => &[SecondLast],
+        RuleOrder::ThirdLast => &[ThirdLast],
+        RuleOrder::NotLast => &[SecondLast, ThirdLast],
+        RuleOrder::Any => &[Last, SecondLast, ThirdLast],
     }
 }
 
@@ -395,11 +342,6 @@ pub fn has_distinct_rule_order_slots(rules: &[ForgeRule]) -> bool {
     assign(0, rules, &mut used)
 }
 
-/// True when `action` satisfies a rule of the given generic `rule_type`.
-pub fn action_matches_type(action: ActionId, rule_type: RuleType) -> bool {
-    action.rule_type() == rule_type
-}
-
 /// Groups consecutive equal actions and prefixes each run with its count.
 pub fn compact_actions(actions: &[ActionId]) -> String {
     let mut tokens: Vec<String> = Vec::new();
@@ -428,13 +370,8 @@ pub fn path_from_actions(start: i32, actions: &[ActionId]) -> Vec<i32> {
     path
 }
 
-/// Human-readable rule, e.g. `"Hit Last"`.
-pub fn format_rule(rule: ForgeRule) -> String {
-    format!("{} {}", rule.rule_type.label(), rule.order.label())
-}
-
 /// A named solution persisted by the store.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedRecipe {
     pub id: String,
     pub category: String,
@@ -539,73 +476,6 @@ pub enum ValidationError {
         "actions must be an array of 0..=256 valid action ids that move start to target within 0..150"
     )]
     Actions,
-}
-
-/// Strict runtime validation for recipes coming back from storage or JSON.
-pub fn parse_saved_recipe_value(value: &serde_json::Value) -> Option<SavedRecipe> {
-    let object = value.as_object()?;
-    let id = object.get("id")?.as_str()?;
-    if id.is_empty() {
-        return None;
-    }
-    let category = object.get("category")?.as_str()?;
-    if category.is_empty() {
-        return None;
-    }
-    let name = object.get("name")?.as_str()?;
-    if name.is_empty() {
-        return None;
-    }
-    let start = object.get("start")?.as_i64()?;
-    let target = object.get("target")?.as_i64()?;
-    let start = i32::try_from(start).ok()?;
-    let target = i32::try_from(target).ok()?;
-    let compact = object.get("compact")?.as_str()?;
-    let created_at = object.get("createdAt")?.as_str()?;
-    let updated_at = object.get("updatedAt")?.as_str()?;
-    if !is_iso_string(created_at) || !is_iso_string(updated_at) {
-        return None;
-    }
-    let rules_value = object.get("rules")?.as_array()?;
-    if rules_value.is_empty() || rules_value.len() > 3 {
-        return None;
-    }
-    let rules = rules_value
-        .iter()
-        .map(parse_forge_rule_value)
-        .collect::<Option<Vec<_>>>()?;
-    if !has_distinct_rule_order_slots(&rules) {
-        return None;
-    }
-    let actions_value = object.get("actions")?.as_array()?;
-    let actions = actions_value
-        .iter()
-        .map(|action| action.as_str().and_then(ActionId::parse))
-        .collect::<Option<Vec<_>>>()?;
-
-    Some(SavedRecipe {
-        id: id.to_string(),
-        category: category.to_string(),
-        name: name.to_string(),
-        start,
-        target,
-        rules,
-        actions,
-        compact: compact.to_string(),
-        created_at: created_at.to_string(),
-        updated_at: updated_at.to_string(),
-    })
-}
-
-fn parse_forge_rule_value(value: &serde_json::Value) -> Option<ForgeRule> {
-    let object = value.as_object()?;
-    let rule_type = RuleType::parse(object.get("type")?.as_str()?)?;
-    let order = RuleOrder::parse(object.get("order")?.as_str()?)?;
-    Some(ForgeRule { rule_type, order })
-}
-
-fn is_iso_string(value: &str) -> bool {
-    chrono::DateTime::parse_from_rfc3339(value).is_ok()
 }
 
 #[cfg(test)]
